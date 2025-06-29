@@ -1,16 +1,8 @@
 export interface User {
   id: string;
-  githubId: string;
-  username: string;
+  name: string;
   email: string;
   avatarUrl: string;
-  subscription: {
-    tier: "free" | "pro" | "enterprise";
-    expiresAt?: Date;
-    features: string[];
-  };
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface Repository {
@@ -43,7 +35,7 @@ export interface ReadmeGeneration {
 export interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  login: (userData: User) => void;
+  login: () => void;
   logout: () => void;
   loading: boolean;
 }

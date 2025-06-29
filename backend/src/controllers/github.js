@@ -1,17 +1,18 @@
-import { post, get } from "axios";
-import { sign, verify } from "jsonwebtoken";
-import { configurations } from "../config/config";
+import axios from "axios";
+import jwt from "jsonwebtoken";
+import { configurations } from "../config/config.js";
+import User from "../models/user.js";
+import Pricing from "../models/pricing.js";
 
 export function githubLogin(req, res) {
-  const redirectUri = `https://github.com/login/oauth/authorize?client_id=${configurations.githubClientId}&scope=repo`;
+  const redirectUri = `https://github.com/login/oauth/authorize?client_id=${configurations.githubClientId}&scope=repo user:email`;
   res.redirect(redirectUri);
 }
 
-// Step 2: GitHub callback to exchange code for access token
 export async function githubCallback(req, res) {
   const code = req.query.code;
   try {
-    const tokenRes = await post(
+    const tokenRes = await axios.post(
       "https://github.com/login/oauth/access_token",
       {
         client_id: configurations.githubClientId,
@@ -21,59 +22,133 @@ export async function githubCallback(req, res) {
       { headers: { Accept: "application/json" } }
     );
     const accessToken = tokenRes.data.access_token;
-    // Issue JWT for session
-    const token = sign({ accessToken }, configurations.jwtSecret, {
+
+    const emailRes = await axios.get("https://api.github.com/user/emails", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+      },
+    });
+    const emails = emailRes.data;
+    const primaryEmail =
+      emails.find((email) => email.primary && email.verified)?.email ||
+      emails[0]?.email;
+
+    let user = await User.findOne({ email: primaryEmail });
+
+    if (user) {
+      user.access_token = accessToken;
+      await user.save();
+    } else {
+      const userRes = await axios.get("https://api.github.com/user", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/vnd.github+json",
+        },
+      });
+      const { name, login, avatar_url } = userRes.data;
+
+      user = await User.create({
+        name,
+        login_name: login,
+        email: primaryEmail,
+        profil_picture: avatar_url,
+        access_token: accessToken,
+      });
+
+      await Pricing.create({
+        user_id: user._id,
+        plan_name: "free",
+      });
+    }
+
+    const token = jwt.sign({ user_id: user._id }, configurations.jwtSecret, {
       expiresIn: "24h",
     });
-    res.json({ token });
+
+    return res.status(200).json({
+      message: "User logged in successfully",
+      data: {
+        token,
+        user: {
+          name: user.name,
+          email: user.email,
+          avatarUrl: user.profil_picture,
+        },
+      },
+      error: null,
+    });
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "GitHub OAuth failed", error: err.message });
+    return res.status(500).json({
+      message: "Internal server error",
+      response: null,
+      error: err.message,
+    });
   }
 }
 
-// Step 3: Get all repos for the authenticated user
 export async function getRepos(req, res) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader)
-    return res.status(401).json({ message: "No token provided" });
+  const userId = req.decoded._id;
+  const accessToken = req.decoded.access_token;
+
   try {
-    const { accessToken } = verify(
-      authHeader.split(" ")[1],
-      configurations.jwtSecret
-    );
-    const reposRes = await get("https://api.github.com/user/repos", {
+    const reposRes = await axios.get("https://api.github.com/user/repos", {
       headers: { Authorization: `token ${accessToken}` },
     });
-    res.json(reposRes.data);
+
+    const simplifyRepo = reposRes.data.map((repo) => ({
+      id: repo.id,
+      name: repo.name,
+      fullName: repo.full_name,
+      description: repo.description || "",
+      language: repo.language || "Unknown",
+      stars: repo.stargazers_count,
+      forks: repo.forks_count,
+      isPrivate: repo.private,
+      updatedAt: new Date(repo.updated_at),
+      createdAt: new Date(repo.created_at),
+      hasReadme: false, // You can update this based on API check
+      readmeGenerated: false, // Your own system can flag this
+      url: repo.html_url,
+    }));
+
+    const planData = await Pricing.findOne({ user_id: userId });
+
+    return res.status(200).json({
+      message: "User repositries returned successfully",
+      response: {
+        data: {
+          repositories: simplifyRepo,
+          planData: planData,
+        },
+      },
+      error: null,
+    });
   } catch (err) {
-    res
-      .status(401)
-      .json({ message: "Invalid or expired token", error: err.message });
+    return res.status(500).json({
+      message: "Internal server error",
+      response: null,
+      error: err.message,
+    });
   }
 }
 
-// Step 4: Generate markdown documentation for a repo
 export async function createMarkdown(req, res) {
   const { repoFullName } = req.body;
-  const authHeader = req.headers.authorization;
-  if (!authHeader)
-    return res.status(401).json({ message: "No token provided" });
+  const accessToken = req.decoded.access_token;
+
   try {
-    const { accessToken } = verify(
-      authHeader.split(" ")[1],
-      configurations.jwtSecret
+    const repoRes = await axios.get(
+      `https://api.github.com/repos/${repoFullName}`,
+      {
+        headers: { Authorization: `token ${accessToken}` },
+      }
     );
-    // Fetch repo details
-    const repoRes = await get(`https://api.github.com/repos/${repoFullName}`, {
-      headers: { Authorization: `token ${accessToken}` },
-    });
     const repo = repoRes.data;
-    // Fetch README if exists
+
     let readme = "";
     try {
-      const readmeRes = await get(
+      const readmeRes = await axios.get(
         `https://api.github.com/repos/${repoFullName}/readme`,
         {
           headers: { Authorization: `token ${accessToken}` },
@@ -90,8 +165,10 @@ export async function createMarkdown(req, res) {
     }.git\n\`\`\`\n\n${readme ? "## README\n\n" + readme : ""}\n`;
     res.json({ markdown });
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Failed to generate markdown", error: err.message });
+    return res.status(500).json({
+      message: "Internal server error",
+      response: null,
+      error: err.message,
+    });
   }
 }

@@ -21,20 +21,21 @@ import Header from "@/components/Header";
 import RepositoryCard from "@/components/RepositoryCard";
 import { useAuth } from "@/contexts/AuthContext";
 import { Repository } from "@/types";
-import { mockRepositories } from "@/services/mockData";
 
 export default function DashboardPage() {
   const { user, isAuthenticated } = useAuth();
-  const [repositories, setRepositories] =
-    useState<Repository[]>(mockRepositories);
+  const [repositories, setRepositories] = useState<Repository[]>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [planData, setPlanData] = useState({
+    plan_name: "",
+    max_generated: 0,
+    generated: 0,
+  });
   const [searchTerm, setSearchTerm] = useState("");
-  const [languageFilter, setLanguageFilter] = useState("all");
-  const [sortBy, setSortBy] = useState("updated");
-  const totalRepos = repositories.length;
-  const totalStars = repositories.reduce((sum, repo) => sum + repo.stars, 0);
 
   const handleGenerateReadme = (repository: Repository) => {
-    if (user?.subscription.tier === "free" && repository.readmeGenerated) {
+    if (planData?.max_generated <= planData?.generated) {
       alert(
         "Free tier allows only 1 README per repository. Upgrade to Pro for unlimited generations!"
       );
@@ -44,37 +45,53 @@ export default function DashboardPage() {
     window.location.href = `/generate/${repository.id}`;
   };
 
-  const filteredRepositories = repositories
-    .filter(
-      (repo) =>
-        repo.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        repo.description.toLowerCase().includes(searchTerm.toLowerCase())
-    )
-    .filter(
-      (repo) => languageFilter === "all" || repo.language === languageFilter
-    )
-    .sort((a, b) => {
-      switch (sortBy) {
-        case "name":
-          return a.name.localeCompare(b.name);
-        case "stars":
-          return b.stars - a.stars;
-        case "updated":
-          return (
-            new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-          );
-        default:
-          return 0;
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const fetchRepositories = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch("http://localhost:3001/api/v1/github/repos", {
+          headers: {
+            Authorization: token,
+          },
+        });
+
+        if (!res.ok) {
+          throw new Error(`Error fetching repos: ${res.statusText}`);
+        }
+
+        const response = await res.json();
+        const data: Repository[] = response.response.data.repositories;
+        setRepositories(data);
+        setPlanData(response.response.data.planData);
+      } catch (err: any) {
+        setError(err.message || "Unknown error");
+      } finally {
+        setLoading(false);
       }
-    });
+    };
 
-  const languages = Array.from(
-    new Set(repositories.map((repo) => repo.language))
-  );
+    fetchRepositories();
+  }, [isAuthenticated]);
 
-  const generatedCount = repositories.filter(
-    (repo) => repo.readmeGenerated
-  ).length;
+  const filteredRepositories = Array.isArray(repositories)
+    ? repositories.filter((repo) => {
+        const term = searchTerm.toLowerCase();
+        return (
+          repo.name.toLowerCase().includes(term) ||
+          repo.description.toLowerCase().includes(term)
+        );
+      })
+    : [];
+
+  const totalRepos = filteredRepositories?.length;
+  const totalStars = Array.isArray(filteredRepositories)
+    ? filteredRepositories.reduce((sum, repo) => sum + repo.stars, 0)
+    : 0;
 
   if (!isAuthenticated) {
     return null;
@@ -85,135 +102,124 @@ export default function DashboardPage() {
       <Header />
 
       <main className="container mx-auto px-4 md:px-6 lg:px-8 max-w-[2000px] py-8">
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                Welcome back, {user?.username}!
-              </h1>
-              <p className="text-gray-600">
-                Manage your repositories and generate professional README files
-              </p>
-            </div>
-            <Badge variant="secondary" className="px-4 py-2">
-              <Sparkles className="h-4 w-4 mr-2" />
-              {user?.subscription.tier.charAt(0).toUpperCase() +
-                user?.subscription.tier.slice(1)}{" "}
-              Plan
-            </Badge>
+        {loading && (
+          <div className="text-center py-12">
+            <p className="text-gray-600">Loading repositories...</p>
           </div>
+        )}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Total Repositories
-                </CardTitle>
-                <BookOpen className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{totalRepos}</div>
-                <p className="text-xs text-muted-foreground">
-                  Across all your projects
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                  READMEs Generated
-                </CardTitle>
-                <Sparkles className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{generatedCount}</div>
-                <p className="text-xs text-muted-foreground">
-                  {((generatedCount / totalRepos) * 100).toFixed(1)}% of
-                  repositories
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Total Stars
-                </CardTitle>
-                <BarChart3 className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{totalStars}</div>
-                <p className="text-xs text-muted-foreground">
-                  Across all repositories
-                </p>
-              </CardContent>
-            </Card>
+        {error && (
+          <div className="text-center py-12 text-red-600">
+            <p>Error: {error}</p>
           </div>
-        </div>
-
-        <div className="mb-6">
-          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
-            <div className="flex flex-1 items-center space-x-4">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                <Input
-                  placeholder="Search repositories..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
-                />
+        )}
+        {!loading && !error && (
+          <>
+            <div className="mb-8">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                    Welcome back, {user?.name}!
+                  </h1>
+                  <p className="text-gray-600">
+                    Manage your repositories and generate professional README
+                    files
+                  </p>
+                </div>
+                <Badge variant="secondary" className="px-4 py-2">
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  {planData?.plan_name?.charAt(0).toUpperCase() +
+                    planData?.plan_name?.slice(1)}{" "}
+                  Plan
+                </Badge>
               </div>
 
-              <Select value={languageFilter} onValueChange={setLanguageFilter}>
-                <SelectTrigger className="w-40">
-                  <Filter className="h-4 w-4 mr-2" />
-                  <SelectValue placeholder="Language" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Languages</SelectItem>
-                  {languages.map((language) => (
-                    <SelectItem key={language} value={language}>
-                      {language}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">
+                      Total Repositories
+                    </CardTitle>
+                    <BookOpen className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{totalRepos}</div>
+                    <p className="text-xs text-muted-foreground">
+                      Across all your projects
+                    </p>
+                  </CardContent>
+                </Card>
 
-              <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="w-40">
-                  <SelectValue placeholder="Sort by" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="updated">Last Updated</SelectItem>
-                  <SelectItem value="name">Name</SelectItem>
-                  <SelectItem value="stars">Stars</SelectItem>
-                </SelectContent>
-              </Select>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">
+                      READMEs Generated
+                    </CardTitle>
+                    <Sparkles className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{planData.generated}</div>
+                    <p className="text-xs text-muted-foreground">
+                      {((planData.generated / totalRepos) * 100).toFixed(1)}% of
+                      repositories
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">
+                      Total Stars
+                    </CardTitle>
+                    <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{totalStars}</div>
+                    <p className="text-xs text-muted-foreground">
+                      Across all repositories
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
             </div>
-          </div>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredRepositories.map((repository) => (
-            <RepositoryCard
-              key={repository.id}
-              repository={repository}
-              onGenerateReadme={handleGenerateReadme}
-            />
-          ))}
-        </div>
+            <div className="mb-6">
+              <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+                <div className="flex flex-1 items-center space-x-4">
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                    <Input
+                      placeholder="Search repositories..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
 
-        {filteredRepositories.length === 0 && (
-          <div className="text-center py-12">
-            <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              No repositories found
-            </h3>
-            <p className="text-gray-600">
-              Try adjusting your search or filter criteria
-            </p>
-          </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {Array.isArray(filteredRepositories) &&
+                filteredRepositories.map((repository) => (
+                  <RepositoryCard
+                    key={repository.id}
+                    repository={repository}
+                    onGenerateReadme={handleGenerateReadme}
+                  />
+                ))}
+            </div>
+
+            {filteredRepositories?.length === 0 && (
+              <div className="text-center py-12">
+                <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  No repositories found
+                </h3>
+                <p className="text-gray-600">Try adjusting your search</p>
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>

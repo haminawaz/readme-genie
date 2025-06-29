@@ -12,13 +12,12 @@ import {
 } from "lucide-react";
 import Header from "@/components/Header";
 import { useAuth } from "@/contexts/AuthContext";
-import { mockUser } from "@/services/mockData";
 
 export default function HomePage() {
   const { login, isAuthenticated } = useAuth();
 
   const handleGitHubLogin = () => {
-    login(mockUser);
+    login();
   };
 
   if (isAuthenticated) {

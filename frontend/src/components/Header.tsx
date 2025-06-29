@@ -10,13 +10,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/contexts/AuthContext";
-import { mockUser } from "@/services/mockData";
 
 export default function Header() {
   const { user, login, isAuthenticated, logout } = useAuth();
 
   const handleGitHubLogin = () => {
-    login(mockUser);
+    login();
   };
 
   return (
@@ -59,9 +58,9 @@ export default function Header() {
                     className="relative h-10 w-10 rounded-full"
                   >
                     <Avatar className="h-10 w-10">
-                      <AvatarImage src={user.avatarUrl} alt={user.username} />
+                      <AvatarImage src={user.avatarUrl} alt={user.name} />
                       <AvatarFallback>
-                        {user.username.charAt(0).toUpperCase()}
+                        {user.name.charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
                   </Button>
@@ -69,7 +68,7 @@ export default function Header() {
                 <DropdownMenuContent className="w-56" align="end">
                   <DropdownMenuItem className="flex items-center">
                     <User className="mr-2 h-4 w-4" />
-                    <span>{user.username}</span>
+                    <span>{user.name}</span>
                   </DropdownMenuItem>
                   <DropdownMenuItem>
                     <Settings className="mr-2 h-4 w-4" />
